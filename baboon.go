@@ -96,7 +96,7 @@ func (b *Baboon) live() {
 			e := b.entrance(newRope)
 			select {
 			case e <- b:
-				log.Printf("%s: Crossing from %s on %s", b, b.pos, newRope)
+				// Does not necessarily mean the Baboon has crossed the gorge, could be that the rope rejected the Baboon
 				b.pos = rope
 			case <-time.After(1000 * time.Millisecond):
 				// Couldn't get a rope
@@ -169,6 +169,7 @@ func (r *Rope) acceptBaboon(b *Baboon, fromPos Position) {
 func (r *Rope) moveBaboons() {
 	select {
 	case b := <-r.c:
+		log.Printf("%s: %s is now on %s side", r, b, r.towards)
 		b.posc <- r.towards
 	default:
 		// Nothing to do.
