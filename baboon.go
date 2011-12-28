@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 )
 
@@ -18,30 +19,26 @@ const (
 	rope  Position = "rope"
 	left  Position = "left"
 	right Position = "right"
+
+	numRopes   = 10
+	numBaboons = 2
+	ropeLength = 5 // Max Baboons on a Rope
 )
 
 type Baboon struct {
+	// Immutable
 	id    int
 	color Color
-	pos   Position
-}
+	posc  chan Position // Notification from Rope that we've moved
 
-type ropeQuery struct {
-	res chan ropeStatus
-}
-
-// ropeStatus is a snapshot of the rope's status when asking
-type ropeStatus struct {
-	free     bool  // if no baboons on rope
-	occupied Color // if !free
-	towards  Position
+	// Owned by Baboon's event loop:
+	pos Position
 }
 
 type Rope struct {
 	// Immutable.
 	id                  int
 	fromLeft, fromRight chan *Baboon // to move onto the rope
-	qc                  chan ropeQuery
 
 	// Owned by Rope's event loop:
 	c        chan *Baboon // channel capacity is how many baboons can fit
@@ -49,23 +46,36 @@ type Rope struct {
 	towards  Position     // towards left or right; invalid if len(c) == 0
 }
 
+var (
+	ropes []*Rope
+)
+
 func main() {
 	baboons := []*Baboon{}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < numBaboons; i++ {
 		c := red
 		p := left
 		if i%2 == 0 {
 			c = blue
 			p = right
 		}
-		b := &Baboon{id: i, color: c, pos: p}
+		b := &Baboon{
+			id:    i,
+			color: c,
+			pos:   p,
+			posc:  make(chan Position, 1),
+		}
 		baboons = append(baboons, b)
 		go b.live()
 	}
 
-	ropes := []*Rope{}
-	for i := 0; i < 10; i++ {
-		r := &Rope{id: i}
+	for i := 0; i < numRopes; i++ {
+		r := &Rope{
+			id:        i,
+			fromRight: make(chan *Baboon),
+			fromLeft:  make(chan *Baboon),
+			c:         make(chan *Baboon, ropeLength),
+		}
 		go r.hang()
 		ropes = append(ropes, r)
 	}
@@ -77,8 +87,35 @@ func main() {
 // The baboon's lifecycle.
 func (b *Baboon) live() {
 	for {
-		select {}
+		if b.pos == rope {
+			b.pos = <-b.posc
+		} else {
+			b.poop()
+			// Now pick a rope to get on
+			newRope := ropes[rand.Intn(len(ropes))]
+			e := b.entrance(newRope)
+			select {
+			case e <- b:
+				log.Printf("%s: Crossing from %s on %s", b, b.pos, newRope)
+				b.pos = rope
+			case <-time.After(1000 * time.Millisecond):
+				// Couldn't get a rope
+			}
+		}
 	}
+}
+
+func (b *Baboon) entrance(r *Rope) chan<- *Baboon {
+	if b.pos == right {
+		return r.fromRight
+	}
+	return r.fromLeft
+}
+
+func (b *Baboon) poop() {
+	log.Printf("%s pooping on %s side", b, b.pos)
+	wait := time.Duration(rand.Intn(1000)) * time.Millisecond
+	time.Sleep(wait)
 }
 
 func (b *Baboon) String() string {
@@ -109,9 +146,11 @@ func (r *Rope) hang() {
 		case <-tick.C:
 			r.moveBaboons()
 		case b := <-fl:
+			log.Printf("%s: %s entered from left", r, b)
 			r.towards = right
 			r.c <- b // can't block; cap verified
 		case b := <-fr:
+			log.Printf("%s: %s entered from right", r, b)
 			r.towards = left
 			r.c <- b // can't block; cap verified
 		}
@@ -121,11 +160,9 @@ func (r *Rope) hang() {
 func (r *Rope) moveBaboons() {
 	select {
 	case b := <-r.c:
-		log.Printf("%s moved %s to %s", r, b, r.towards)
-		b.pos = r.towards // TODO: don't mess with its state; send baboon a message that it's been moved.
+		b.posc <- r.towards
 	default:
 		// Nothing to do.
-		log.Printf("%s idle", r)
 	}
 }
 
