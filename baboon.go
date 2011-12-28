@@ -20,8 +20,8 @@ const (
 	left  Position = "left"
 	right Position = "right"
 
-	numRopes   = 10
-	numBaboons = 2
+	numRopes   = 1
+	numBaboons = 10
 	ropeLength = 5 // Max Baboons on a Rope
 )
 
@@ -146,15 +146,24 @@ func (r *Rope) hang() {
 		case <-tick.C:
 			r.moveBaboons()
 		case b := <-fl:
-			log.Printf("%s: %s entered from left", r, b)
-			r.towards = right
-			r.c <- b // can't block; cap verified
+			r.acceptBaboon(b, left)
 		case b := <-fr:
-			log.Printf("%s: %s entered from right", r, b)
-			r.towards = left
-			r.c <- b // can't block; cap verified
+			r.acceptBaboon(b, right)
 		}
 	}
+}
+
+func (r *Rope) acceptBaboon(b *Baboon, fromPos Position) {
+	if len(r.c) > 0 && b.color != r.lastButt {
+		// Send the Baboon back to the side it came from as if it never actually got on the rope.
+		log.Printf("%s: %s rejected from %s due to butt", r, b, fromPos)
+		b.posc <- fromPos
+		return
+	}
+	log.Printf("%s: %s entered from %s", r, b, fromPos)
+	r.towards = fromPos
+	r.lastButt = b.color
+	r.c <- b // can't block; cap verified
 }
 
 func (r *Rope) moveBaboons() {
